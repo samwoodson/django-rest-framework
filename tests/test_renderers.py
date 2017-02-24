@@ -643,6 +643,7 @@ class CacheRenderTest(TestCase):
         """
         method = getattr(self.client, http_method)
         resp = method(url)
+        resp._closable_objects = []
         del resp.client, resp.request
         try:
             del resp.wsgi_request
