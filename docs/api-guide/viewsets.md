@@ -51,7 +51,7 @@ Typically we wouldn't do this, but would instead register the viewset with a rou
     from rest_framework.routers import DefaultRouter
 
     router = DefaultRouter()
-    router.register(r'users', UserViewSet)
+    router.register(r'users', UserViewSet, base_name='user')
     urlpatterns = router.urls
 
 Rather than writing your own viewsets, you'll often want to use the existing base classes that provide a default set of behavior.  For example:
@@ -70,9 +70,10 @@ There are two main advantages of using a `ViewSet` class over using a `View` cla
 
 Both of these come with a trade-off.  Using regular views and URL confs is more explicit and gives you more control.  ViewSets are helpful if you want to get up and running quickly, or when you have a large API and you want to enforce a consistent URL configuration throughout.
 
-## Marking extra actions for routing
 
-The default routers included with REST framework will provide routes for a standard set of create/retrieve/update/destroy style operations, as shown below:
+## ViewSet actions
+
+The default routers included with REST framework will provide routes for a standard set of create/retrieve/update/destroy style actions, as shown below:
 
     class UserViewSet(viewsets.ViewSet):
         """
@@ -100,6 +101,23 @@ The default routers included with REST framework will provide routes for a stand
 
         def destroy(self, request, pk=None):
             pass
+
+During dispatch the name of the current action is available via the `.action` attribute.
+You may inspect `.action` to adjust behaviour based on the current action.
+
+For example, you could restrict permissions to everything except the `list` action similar to this:
+
+    def get_permissions(self):
+        """
+        Instantiates and returns the list of permissions that this view requires.
+        """
+        if self.action == 'list':
+            permission_classes = [IsAuthenticated]
+        else:
+            permission_classes = [IsAdmin]
+        return [permission() for permission in permission_classes]
+
+## Marking extra actions for routing
 
 If you have ad-hoc methods that you need to be routed to, you can mark them as requiring routing using the `@detail_route` or `@list_route` decorators.
 
@@ -158,6 +176,21 @@ These decorators will route `GET` requests by default, but may also accept other
            ...
 
 The two new actions will then be available at the urls `^users/{pk}/set_password/$` and `^users/{pk}/unset_password/$`
+
+## Reversing action URLs
+
+If you need to get the URL of an action, use the `.reverse_action()` method. This is a convenience wrapper for `reverse()`, automatically passing the view's `request` object and prepending the `url_name` with the `.basename` attribute.
+
+Note that the `basename` is provided by the router during `ViewSet` registration. If you are not using a router, then you must provide the `basename` argument to the `.as_view()` method.
+
+Using the example from the previous section:
+
+```python
+>>> view.reverse_action('set-password', args=['1'])
+'http://localhost:8000/api/users/1/set_password'
+```
+
+The `url_name` argument should match the same argument to the `@list_route` and `@detail_route` decorators. Additionally, this can be used to reverse the default `list` and `detail` routes.
 
 ---
 
@@ -234,6 +267,8 @@ You may need to provide custom `ViewSet` classes that do not have the full set o
 ## Example
 
 To create a base viewset class that provides `create`, `list` and `retrieve` operations, inherit from `GenericViewSet`, and mixin the required actions:
+
+    from rest_framework import mixins
 
     class CreateListRetrieveViewSet(mixins.CreateModelMixin,
                                     mixins.ListModelMixin,

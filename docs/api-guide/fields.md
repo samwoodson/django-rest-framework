@@ -45,6 +45,8 @@ Defaults to `True`.
 
 Normally an error will be raised if `None` is passed to a serializer field. Set this keyword argument to `True` if `None` should be considered a valid value.
 
+Note that setting this argument to `True` will imply a default value of `null` for serialization output, but does not imply a default for input deserialization.
+
 Defaults to `False`
 
 ### `default`
@@ -55,11 +57,13 @@ The `default` is not applied during partial update operations. In the partial up
 
 May be set to a function or other callable, in which case the value will be evaluated each time it is used. When called, it will receive no arguments. If the callable has a `set_context` method, that will be called each time before getting the value with the field instance as only argument. This works the same way as for [validators](validators.md#using-set_context).
 
+When serializing the instance, default will be used if the the object attribute or dictionary key is not present in the instance.
+
 Note that setting a `default` value implies that the field is not required. Including both the `default` and `required` keyword arguments is invalid and will raise an error.
 
 ### `source`
 
-The name of the attribute that will be used to populate the field.  May be a method that only takes a `self` argument, such as `URLField(source='get_absolute_url')`, or may use dotted notation to traverse attributes, such as `EmailField(source='user.email')`.
+The name of the attribute that will be used to populate the field.  May be a method that only takes a `self` argument, such as `URLField(source='get_absolute_url')`, or may use dotted notation to traverse attributes, such as `EmailField(source='user.email')`. When serializing fields with dotted notation, it may be necessary to provide a `default` value if any object is not present or is empty during attribute traversal.
 
 The value `source='*'` has a special meaning, and is used to indicate that the entire object should be passed through to the field.  This can be useful for creating nested representations, or for fields which require access to the complete object in order to determine the output representation.
 
@@ -119,6 +123,8 @@ For more details see the [HTML & Forms][html-and-forms] documentation.
 A boolean representation.
 
 When using HTML encoded form input be aware that omitting a value will always be treated as setting a field to `False`, even if it has a `default=True` option specified. This is because HTML checkbox inputs represent the unchecked state by omitting the value, so REST framework treats omission as if it is an empty checkbox input.
+
+Note that default `BooleanField` instances will be generated with a `required=False` option (since Django `models.BooleanField` is always `blank=True`). If you want to change this behaviour explicitly declare the `BooleanField` on the serializer class.
 
 Corresponds to `django.db.models.fields.BooleanField`.
 
@@ -267,6 +273,7 @@ Corresponds to `django.db.models.fields.DecimalField`.
 - `max_value` Validate that the number provided is no greater than this value.
 - `min_value` Validate that the number provided is no less than this value.
 - `localize` Set to `True` to enable localization of input and output based on the current locale. This will also force `coerce_to_string` to `True`. Defaults to `False`. Note that data formatting is enabled if you have set `USE_L10N=True` in your settings file.
+- `rounding` Sets the rounding mode used when quantising to the configured precision. Valid values are [`decimal` module rounding modes][python-decimal-rounding-modes]. Defaults to `None`.
 
 #### Example usage
 
@@ -353,8 +360,6 @@ Corresponds to `django.db.models.fields.DurationField`
 The `validated_data` for these fields will contain a `datetime.timedelta` instance.
 The representation is a string following this format `'[DD] [HH:[MM:]]ss[.uuuuuu]'`.
 
-**Note:** This field is only available with Django versions >= 1.8.
-
 **Signature:** `DurationField()`
 
 ---
@@ -432,7 +437,7 @@ Requires either the `Pillow` package or `PIL` package.  The `Pillow` package is 
 
 A field class that validates a list of objects.
 
-**Signature**: `ListField(child, min_length=None, max_length=None)`
+**Signature**: `ListField(child=<A_FIELD_INSTANCE>, min_length=None, max_length=None)`
 
 - `child` - A field instance that should be used for validating the objects in the list. If this argument is not provided then objects in the list will not be validated.
 - `min_length` - Validates that the list contains no fewer than this number of elements.
@@ -455,7 +460,7 @@ We can now reuse our custom `StringListField` class throughout our application, 
 
 A field class that validates a dictionary of objects. The keys in `DictField` are always assumed to be string values.
 
-**Signature**: `DictField(child)`
+**Signature**: `DictField(child=<A_FIELD_INSTANCE>)`
 
 - `child` - A field instance that should be used for validating the values in the dictionary. If this argument is not provided then values in the mapping will not be validated.
 
@@ -556,6 +561,8 @@ Note that the `WritableField` class that was present in version 2.x no longer ex
 
 ## Examples
 
+### A Basic Custom Field
+
 Let's look at an example of serializing a class that represents an RGB color value:
 
     class Color(object):
@@ -595,7 +602,7 @@ As an example, let's create a field that can be used to represent the class name
             """
             return obj.__class__.__name__
 
-#### Raising validation errors
+### Raising validation errors
 
 Our `ColorField` class above currently does not perform any data validation.
 To indicate invalid data, we should raise a `serializers.ValidationError`, like so:
@@ -639,7 +646,138 @@ The `.fail()` method is a shortcut for raising `ValidationError` that takes a me
 
         return Color(red, green, blue)
 
-This style keeps you error messages more cleanly separated from your code, and should be preferred.
+This style keeps your error messages cleaner and more separated from your code, and should be preferred.
+
+### Using `source='*'`
+
+Here we'll take an example of a _flat_ `DataPoint` model with `x_coordinate` and `y_coordinate` attributes.
+
+    class DataPoint(models.Model):
+        label = models.CharField(max_length=50)
+        x_coordinate = models.SmallIntegerField()
+        y_coordinate = models.SmallIntegerField()
+
+Using a custom field and `source='*'` we can provide a nested representation of
+the coordinate pair:
+
+    class CoordinateField(serializers.Field):
+
+        def to_representation(self, obj):
+            ret = {
+                "x": obj.x_coordinate,
+                "y": obj.y_coordinate
+            }
+            return ret
+
+        def to_internal_value(self, data):
+            ret = {
+                "x_coordinate": data["x"],
+                "y_coordinate": data["y"],
+            }
+            return ret
+
+
+    class DataPointSerializer(serializers.ModelSerializer):
+        coordinates = CoordinateField(source='*')
+
+        class Meta:
+            model = DataPoint
+            fields = ['label', 'coordinates']
+
+Note that this example doesn't handle validation. Partly for that reason, in a
+real project, the coordinate nesting might be better handled with a nested serialiser
+using `source='*'`, with two `IntegerField` instances, each with their own `source`
+pointing to the relevant field.
+
+The key points from the example, though, are:
+
+* `to_representation` is passed the entire `DataPoint` object and must map from that
+to the desired output.
+
+        >>> instance = DataPoint(label='Example', x_coordinate=1, y_coordinate=2)
+        >>> out_serializer = DataPointSerializer(instance)
+        >>> out_serializer.data
+        ReturnDict([('label', 'testing'), ('coordinates', {'x': 1, 'y': 2})])
+
+* Unless our field is to be read-only, `to_internal_value` must map back to a dict
+suitable for updating our target object. With `source='*'`, the return from
+`to_internal_value` will update the root validated data dictionary, rather than a single key.
+
+        >>> data = {
+        ...     "label": "Second Example",
+        ...     "coordinates": {
+        ...         "x": 3,
+        ...         "y": 4,
+        ...     }
+        ... }
+        >>> in_serializer = DataPointSerializer(data=data)
+        >>> in_serializer.is_valid()
+        True
+        >>> in_serializer.validated_data
+        OrderedDict([('label', 'Second Example'),
+                     ('y_coordinate', 4),
+                     ('x_coordinate', 3)])
+
+For completeness lets do the same thing again but with the nested serialiser
+approach suggested above:
+
+    class NestedCoordinateSerializer(serializers.Serializer):
+        x = serializers.IntegerField(source='x_coordinate')
+        y = serializers.IntegerField(source='y_coordinate')
+
+
+    class DataPointSerializer(serializers.ModelSerializer):
+        coordinates = NestedCoordinateSerializer(source='*')
+
+        class Meta:
+            model = DataPoint
+            fields = ['label', 'coordinates']
+
+Here the mapping between the target and source attribute pairs (`x` and
+`x_coordinate`, `y` and `y_coordinate`) is handled in the `IntegerField`
+declarations. It's our `NestedCoordinateSerializer` that takes `source='*'`.
+
+Our new `DataPointSerializer` exhibits the same behaviour as the custom field
+approach.
+
+Serialising:
+
+    >>> out_serializer = DataPointSerializer(instance)
+    >>> out_serializer.data
+    ReturnDict([('label', 'testing'),
+                ('coordinates', OrderedDict([('x', 1), ('y', 2)]))])
+
+Deserialising:
+
+    >>> in_serializer = DataPointSerializer(data=data)
+    >>> in_serializer.is_valid()
+    True
+    >>> in_serializer.validated_data
+    OrderedDict([('label', 'still testing'),
+                 ('x_coordinate', 3),
+                 ('y_coordinate', 4)])
+
+But we also get the built-in validation for free:
+
+    >>> invalid_data = {
+    ...     "label": "still testing",
+    ...     "coordinates": {
+    ...         "x": 'a',
+    ...         "y": 'b',
+    ...     }
+    ... }
+    >>> invalid_serializer = DataPointSerializer(data=invalid_data)
+    >>> invalid_serializer.is_valid()
+    False
+    >>> invalid_serializer.errors
+    ReturnDict([('coordinates',
+                 {'x': ['A valid integer is required.'],
+                  'y': ['A valid integer is required.']})])
+
+For this reason, the nested serialiser approach would be the first to try. You
+would use the custom field approach when the nested serialiser becomes infeasible
+or overly complex.
+
 
 # Third party packages
 
@@ -678,3 +816,4 @@ The [django-rest-framework-hstore][django-rest-framework-hstore] package provide
 [django-rest-framework-gis]: https://github.com/djangonauts/django-rest-framework-gis
 [django-rest-framework-hstore]: https://github.com/djangonauts/django-rest-framework-hstore
 [django-hstore]: https://github.com/djangonauts/django-hstore
+[python-decimal-rounding-modes]: https://docs.python.org/3/library/decimal.html#rounding-modes

@@ -8,7 +8,7 @@ from django.conf.urls import url
 from django.http import HttpResponse
 from django.test import override_settings
 
-from rest_framework.compat import coreapi
+from rest_framework.compat import coreapi, coreschema
 from rest_framework.parsers import FileUploadParser
 from rest_framework.renderers import CoreJSONRenderer
 from rest_framework.response import Response
@@ -25,10 +25,10 @@ def get_schema():
             'headers': coreapi.Link('/headers/'),
             'location': {
                 'query': coreapi.Link('/example/', fields=[
-                    coreapi.Field(name='example', description='example field')
+                    coreapi.Field(name='example', schema=coreschema.String(description='example field'))
                 ]),
                 'form': coreapi.Link('/example/', action='post', fields=[
-                    coreapi.Field(name='example'),
+                    coreapi.Field(name='example')
                 ]),
                 'body': coreapi.Link('/example/', action='post', fields=[
                     coreapi.Field(name='example', location='body')
@@ -199,7 +199,7 @@ class APIClientTests(APITestCase):
         assert schema.title == 'Example API'
         assert schema.url == 'https://api.example.com/'
         assert schema['simple_link'].description == 'example link'
-        assert schema['location']['query'].fields[0].description == 'example field'
+        assert schema['location']['query'].fields[0].schema.description == 'example field'
         data = client.action(schema, ['simple_link'])
         expected = {
             'method': 'GET',
@@ -275,13 +275,13 @@ class APIClientTests(APITestCase):
         client = CoreAPIClient()
         schema = client.get('http://api.example.com/')
 
-        temp = tempfile.NamedTemporaryFile()
-        temp.write(b'example file content')
-        temp.flush()
+        with tempfile.NamedTemporaryFile() as temp:
+            temp.write(b'example file content')
+            temp.flush()
+            temp.seek(0)
 
-        with open(temp.name, 'rb') as upload:
-            name = os.path.basename(upload.name)
-            data = client.action(schema, ['encoding', 'multipart'], params={'example': upload})
+            name = os.path.basename(temp.name)
+            data = client.action(schema, ['encoding', 'multipart'], params={'example': temp})
 
         expected = {
             'method': 'POST',
@@ -407,13 +407,13 @@ class APIClientTests(APITestCase):
         client = CoreAPIClient()
         schema = client.get('http://api.example.com/')
 
-        temp = tempfile.NamedTemporaryFile()
-        temp.write(b'example file content')
-        temp.flush()
+        with tempfile.NamedTemporaryFile(delete=False) as temp:
+            temp.write(b'example file content')
+            temp.flush()
+            temp.seek(0)
 
-        with open(temp.name, 'rb') as upload:
-            name = os.path.basename(upload.name)
-            data = client.action(schema, ['encoding', 'raw_upload'], params={'example': upload})
+            name = os.path.basename(temp.name)
+            data = client.action(schema, ['encoding', 'raw_upload'], params={'example': temp})
 
         expected = {
             'method': 'POST',

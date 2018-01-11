@@ -44,7 +44,7 @@ This will either raise a `PermissionDenied` or `NotAuthenticated` exception, or 
 For example:
 
     def get_object(self):
-        obj = get_object_or_404(self.get_queryset())
+        obj = get_object_or_404(self.get_queryset(), pk=self.kwargs["pk"])
         self.check_object_permissions(self.request, obj)
         return obj
 
@@ -192,20 +192,20 @@ If you need to test if a request is a read operation or a write operation, you s
 
 ---
 
-**Note**: The instance-level `has_object_permission` method will only be called if the view-level `has_permission` checks have already passed. Also note that in order for the instance-level checks to run, the view code should explicitly call `.check_object_permissions(request, obj)`. If you are using the generic views then this will be handled for you by default.
+**Note**: The instance-level `has_object_permission` method will only be called if the view-level `has_permission` checks have already passed. Also note that in order for the instance-level checks to run, the view code should explicitly call `.check_object_permissions(request, obj)`. If you are using the generic views then this will be handled for you by default. (Function-based views will need to check object permissions explicitly, raising `PermissionDenied` on failure.)
 
 ---
 
 Custom permissions will raise a `PermissionDenied` exception if the test fails. To change the error message associated with the exception, implement a `message` attribute directly on your custom permission. Otherwise the `default_detail` attribute from `PermissionDenied` will be used.
-    
+
     from rest_framework import permissions
 
     class CustomerAccessPermission(permissions.BasePermission):
         message = 'Adding customers not allowed.'
-        
+
         def has_permission(self, request, view):
              ...
-        
+
 ## Examples
 
 The following is an example of a permission class that checks the incoming request's IP address against a blacklist, and denies the request if the IP has been blacklisted.

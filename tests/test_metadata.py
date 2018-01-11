@@ -9,12 +9,11 @@ from rest_framework import (
     exceptions, metadata, serializers, status, versioning, views
 )
 from rest_framework.renderers import BrowsableAPIRenderer
-from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
 from .models import BasicModel
 
-request = Request(APIRequestFactory().options('/'))
+request = APIRequestFactory().options('/')
 
 
 class TestMetadata:
@@ -208,7 +207,7 @@ class TestMetadata:
         view = ExampleView.as_view()
         response = view(request=request)
         assert response.status_code == status.HTTP_200_OK
-        assert list(response.data['actions'].keys()) == ['PUT']
+        assert list(response.data['actions']) == ['PUT']
 
     def test_object_permissions(self):
         """

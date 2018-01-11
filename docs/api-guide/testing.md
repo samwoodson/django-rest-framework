@@ -82,7 +82,11 @@ For example, when forcibly authenticating using a token, you might do something 
 
     user = User.objects.get(username='olivia')
     request = factory.get('/accounts/django-superstars/')
-    force_authenticate(request, user=user, token=user.token)
+    force_authenticate(request, user=user, token=user.auth_token)
+
+---
+
+**Note**: `force_authenticate` directly sets `request.user` to the in-memory `user` instance. If you are re-using the same `user` instance across multiple tests that update the saved `user` state, you may need to call [`refresh_from_db()`][refresh_from_db_docs] between tests.
 
 ---
 
@@ -162,7 +166,7 @@ The `credentials` method is appropriate for testing APIs that require authentica
 
 #### .force_authenticate(user=None, token=None)
 
-Sometimes you may want to bypass authentication, and simple force all requests by the test client to be automatically treated as authenticated.
+Sometimes you may want to bypass authentication entirely and force all requests by the test client to be automatically treated as authenticated.
 
 This can be a useful shortcut if you're testing the API but don't want to have to construct valid authentication credentials in order to make test requests.
 
@@ -288,7 +292,7 @@ similar way as with `RequestsClient`.
 
 ---
 
-# Test cases
+# API Test cases
 
 REST framework includes the following test case classes, that mirror the existing Django test case classes, but use `APIClient` instead of Django's default `Client`.
 
@@ -317,6 +321,32 @@ You can use any of REST framework's test case classes as you would for the regul
             self.assertEqual(response.status_code, status.HTTP_201_CREATED)
             self.assertEqual(Account.objects.count(), 1)
             self.assertEqual(Account.objects.get().name, 'DabApps')
+
+---
+
+# URLPatternsTestCase
+
+REST framework also provides a test case class for isolating `urlpatterns` on a per-class basis. Note that this inherits from Django's `SimpleTestCase`, and will most likely need to be mixed with another test case class.
+
+## Example
+
+    from django.urls import include, path, reverse
+    from rest_framework.test import APITestCase, URLPatternsTestCase
+
+
+    class AccountTests(APITestCase, URLPatternsTestCase):
+        urlpatterns = [
+            path('api/', include('api.urls')),
+        ]
+
+        def test_create_account(self):
+            """
+            Ensure we can create a new account object.
+            """
+            url = reverse('account-list')
+            response = self.client.get(url, format='json')
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(len(response.data), 1)
 
 ---
 
@@ -378,3 +408,4 @@ For example, to add support for using `format='html'` in test requests, you migh
 [client]: https://docs.djangoproject.com/en/stable/topics/testing/tools/#the-test-client
 [requestfactory]: https://docs.djangoproject.com/en/stable/topics/testing/advanced/#django.test.client.RequestFactory
 [configuration]: #configuration
+[refresh_from_db_docs]: https://docs.djangoproject.com/en/1.11/ref/models/instances/#django.db.models.Model.refresh_from_db

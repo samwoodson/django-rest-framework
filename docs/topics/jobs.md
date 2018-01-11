@@ -3,7 +3,7 @@
 Looking for a new Django REST Framework related role? On this site we provide a list of job resources that may be helpful. It's also worth checking out if any of [our sponsors are hiring][drf-funding].
 
 
-## Places to Look for Django REST Framework Jobs
+## Places to look for Django REST Framework Jobs
 
 * [https://www.djangoproject.com/community/jobs/][djangoproject-website]
 * [https://www.python.org/jobs/][python-org-jobs]
@@ -18,7 +18,7 @@ Looking for a new Django REST Framework related role? On this site we provide a 
 * [https://www.remotepython.com/jobs/][remotepython-com]
 
 
-Know of any other great resources for Django REST Framework jobs that are missing in our list? Please [submit a pull request][submit-pr] or [email us][mailto:anna@django-rest-framework.org].
+Know of any other great resources for Django REST Framework jobs that are missing in our list? Please [submit a pull request][submit-pr] or [email us][anna-email].
 
 Wonder how else you can help? One of the best ways you can help Django REST Framework is to ask interviewers if their company is signed up for [REST Framework sponsorship][drf-funding] yet.
 
@@ -32,7 +32,8 @@ Wonder how else you can help? One of the best ways you can help Django REST Fram
 [stackoverflow-com]: http://stackoverflow.com/jobs/developer-jobs-using-django
 [upwork-com]: https://www.upwork.com/o/jobs/browse/skill/django-framework/
 [technobjobs-co-uk]: https://www.technojobs.co.uk/django-jobs
-[remoteok-io]: https://remoteok.io/remote-django-jobs  
+[remoteok-io]: https://remoteok.io/remote-django-jobs
 [remotepython-com]: https://www.remotepython.com/jobs/
 [drf-funding]: https://fund.django-rest-framework.org/topics/funding/
-[submit-pr]: https://github.com/tomchristie/django-rest-framework
+[submit-pr]: https://github.com/encode/django-rest-framework
+[anna-email]: mailto:anna@django-rest-framework.org

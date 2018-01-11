@@ -1,3 +1,5 @@
+from django.http import QueryDict
+
 from rest_framework import serializers
 
 
@@ -52,7 +54,7 @@ class TestSimpleBoundField:
 
         serializer = ExampleSerializer()
         del serializer.fields['text']
-        assert 'text' not in serializer.fields.keys()
+        assert 'text' not in serializer.fields
 
     def test_as_form_fields(self):
         class ExampleSerializer(serializers.Serializer):
@@ -160,3 +162,15 @@ class TestNestedBoundField:
             )
             rendered_packed = ''.join(rendered.split())
             assert rendered_packed == expected_packed
+
+
+class TestJSONBoundField:
+    def test_as_form_fields(self):
+        class TestSerializer(serializers.Serializer):
+            json_field = serializers.JSONField()
+
+        data = QueryDict(mutable=True)
+        data.update({'json_field': '{"some": ["json"}'})
+        serializer = TestSerializer(data=data)
+        assert serializer.is_valid() is False
+        assert serializer['json_field'].as_form_field().value == '{"some": ["json"}'

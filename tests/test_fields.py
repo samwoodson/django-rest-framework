@@ -3,17 +3,22 @@ import os
 import re
 import unittest
 import uuid
-from decimal import Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal
 
 import pytest
 from django.http import QueryDict
 from django.test import TestCase, override_settings
 from django.utils import six
-from django.utils.timezone import utc
+from django.utils.timezone import activate, deactivate, utc
 
 import rest_framework
-from rest_framework import serializers
-from rest_framework.fields import is_simple_callable
+from rest_framework import compat, serializers
+from rest_framework.fields import DjangoImageField, is_simple_callable
+
+try:
+    import pytz
+except ImportError:
+    pytz = None
 
 try:
     import typings
@@ -396,7 +401,7 @@ class TestHTMLInput:
 
         serializer = TestSerializer(data=QueryDict('message='))
         assert serializer.is_valid()
-        assert list(serializer.validated_data.keys()) == ['message']
+        assert list(serializer.validated_data) == ['message']
 
     def test_empty_html_uuidfield_with_optional(self):
         class TestSerializer(serializers.Serializer):
@@ -404,7 +409,7 @@ class TestHTMLInput:
 
         serializer = TestSerializer(data=QueryDict('message='))
         assert serializer.is_valid()
-        assert list(serializer.validated_data.keys()) == []
+        assert list(serializer.validated_data) == []
 
     def test_empty_html_charfield_allow_null(self):
         class TestSerializer(serializers.Serializer):
@@ -501,6 +506,16 @@ class TestCreateOnlyDefault:
         assert serializer.validated_data['context_set'] == 'success'
 
 
+class Test5087Regression:
+    def test_parent_binding(self):
+        parent = serializers.Serializer()
+        field = serializers.CharField()
+
+        assert field.root is field
+        field.bind('name', parent)
+        assert field.root is parent
+
+
 # Tests for field input and output values.
 # ----------------------------------------
 
@@ -522,7 +537,8 @@ class FieldValues:
         Ensure that valid values return the expected validated data.
         """
         for input_value, expected_output in get_items(self.valid_inputs):
-            assert self.field.run_validation(input_value) == expected_output
+            assert self.field.run_validation(input_value) == expected_output, \
+                'input value: {}'.format(repr(input_value))
 
     def test_invalid_inputs(self):
         """
@@ -531,11 +547,13 @@ class FieldValues:
         for input_value, expected_failure in get_items(self.invalid_inputs):
             with pytest.raises(serializers.ValidationError) as exc_info:
                 self.field.run_validation(input_value)
-            assert exc_info.value.detail == expected_failure
+            assert exc_info.value.detail == expected_failure, \
+                'input value: {}'.format(repr(input_value))
 
     def test_outputs(self):
         for output_value, expected_output in get_items(self.outputs):
-            assert self.field.to_representation(output_value) == expected_output
+            assert self.field.to_representation(output_value) == expected_output, \
+                'output value: {}'.format(repr(output_value))
 
 
 # Boolean types...
@@ -576,7 +594,7 @@ class TestBooleanField(FieldValues):
             [],
             {},
         )
-        field = serializers.BooleanField()
+        field = self.field
         for input_value in inputs:
             with pytest.raises(serializers.ValidationError) as exc_info:
                 field.run_validation(input_value)
@@ -584,7 +602,7 @@ class TestBooleanField(FieldValues):
             assert exc_info.value.detail == expected
 
 
-class TestNullBooleanField(FieldValues):
+class TestNullBooleanField(TestBooleanField):
     """
     Valid and invalid values for `BooleanField`.
     """
@@ -703,6 +721,17 @@ class TestSlugField(FieldValues):
     }
     outputs = {}
     field = serializers.SlugField()
+
+    def test_allow_unicode_true(self):
+        field = serializers.SlugField(allow_unicode=True)
+
+        validation_error = False
+        try:
+            field.run_validation(u'slug-99-\u0420')
+        except serializers.ValidationError:
+            validation_error = True
+
+        assert not validation_error
 
 
 class TestURLField(FieldValues):
@@ -1062,8 +1091,21 @@ class TestNoDecimalPlaces(FieldValues):
     field = serializers.DecimalField(max_digits=6, decimal_places=None)
 
 
-# Date & time serializers...
+class TestRoundingDecimalField(TestCase):
+    def test_valid_rounding(self):
+        field = serializers.DecimalField(max_digits=4, decimal_places=2, rounding=ROUND_UP)
+        assert field.to_representation(Decimal('1.234')) == '1.24'
 
+        field = serializers.DecimalField(max_digits=4, decimal_places=2, rounding=ROUND_DOWN)
+        assert field.to_representation(Decimal('1.234')) == '1.23'
+
+    def test_invalid_rounding(self):
+        with pytest.raises(AssertionError) as excinfo:
+            serializers.DecimalField(max_digits=1, decimal_places=1, rounding='ROUND_UNKNOWN')
+        assert 'Invalid rounding option' in str(excinfo.value)
+
+
+# Date & time serializers...
 class TestDateField(FieldValues):
     """
     Valid and invalid values for `DateField`.
@@ -1135,16 +1177,16 @@ class TestDateTimeField(FieldValues):
         '2001-01-01T13:00Z': datetime.datetime(2001, 1, 1, 13, 00, tzinfo=utc),
         datetime.datetime(2001, 1, 1, 13, 00): datetime.datetime(2001, 1, 1, 13, 00, tzinfo=utc),
         datetime.datetime(2001, 1, 1, 13, 00, tzinfo=utc): datetime.datetime(2001, 1, 1, 13, 00, tzinfo=utc),
-        # Django 1.4 does not support timezone string parsing.
-        '2001-01-01T13:00Z': datetime.datetime(2001, 1, 1, 13, 00, tzinfo=utc)
     }
     invalid_inputs = {
         'abc': ['Datetime has wrong format. Use one of these formats instead: YYYY-MM-DDThh:mm[:ss[.uuuuuu]][+HH:MM|-HH:MM|Z].'],
         '2001-99-99T99:00': ['Datetime has wrong format. Use one of these formats instead: YYYY-MM-DDThh:mm[:ss[.uuuuuu]][+HH:MM|-HH:MM|Z].'],
+        '2018-08-16 22:00-24:00': ['Datetime has wrong format. Use one of these formats instead: YYYY-MM-DDThh:mm[:ss[.uuuuuu]][+HH:MM|-HH:MM|Z].'],
         datetime.date(2001, 1, 1): ['Expected a datetime but got a date.'],
+        '9999-12-31T21:59:59.99990-03:00': ['Datetime value out of range.'],
     }
     outputs = {
-        datetime.datetime(2001, 1, 1, 13, 00): '2001-01-01T13:00:00',
+        datetime.datetime(2001, 1, 1, 13, 00): '2001-01-01T13:00:00Z',
         datetime.datetime(2001, 1, 1, 13, 00, tzinfo=utc): '2001-01-01T13:00:00Z',
         '2001-01-01T00:00:00': '2001-01-01T00:00:00',
         six.text_type('2016-01-10T00:00:00'): '2016-01-10T00:00:00',
@@ -1201,8 +1243,81 @@ class TestNaiveDateTimeField(FieldValues):
         '2001-01-01 13:00': datetime.datetime(2001, 1, 1, 13, 00),
     }
     invalid_inputs = {}
-    outputs = {}
+    outputs = {
+        datetime.datetime(2001, 1, 1, 13, 00): '2001-01-01T13:00:00',
+        datetime.datetime(2001, 1, 1, 13, 00, tzinfo=utc): '2001-01-01T13:00:00',
+    }
     field = serializers.DateTimeField(default_timezone=None)
+
+
+@pytest.mark.skipif(pytz is None, reason='pytz not installed')
+class TestTZWithDateTimeField(FieldValues):
+    """
+    Valid and invalid values for `DateTimeField` when not using UTC as the timezone.
+    """
+    @classmethod
+    def setup_class(cls):
+        # use class setup method, as class-level attribute will still be evaluated even if test is skipped
+        kolkata = pytz.timezone('Asia/Kolkata')
+
+        cls.valid_inputs = {
+            '2016-12-19T10:00:00': kolkata.localize(datetime.datetime(2016, 12, 19, 10)),
+            '2016-12-19T10:00:00+05:30': kolkata.localize(datetime.datetime(2016, 12, 19, 10)),
+            datetime.datetime(2016, 12, 19, 10): kolkata.localize(datetime.datetime(2016, 12, 19, 10)),
+        }
+        cls.invalid_inputs = {}
+        cls.outputs = {
+            datetime.datetime(2016, 12, 19, 10): '2016-12-19T10:00:00+05:30',
+            datetime.datetime(2016, 12, 19, 4, 30, tzinfo=utc): '2016-12-19T10:00:00+05:30',
+        }
+        cls.field = serializers.DateTimeField(default_timezone=kolkata)
+
+
+@pytest.mark.skipif(pytz is None, reason='pytz not installed')
+@override_settings(TIME_ZONE='UTC', USE_TZ=True)
+class TestDefaultTZDateTimeField(TestCase):
+    """
+    Test the current/default timezone handling in `DateTimeField`.
+    """
+
+    @classmethod
+    def setup_class(cls):
+        cls.field = serializers.DateTimeField()
+        cls.kolkata = pytz.timezone('Asia/Kolkata')
+
+    def test_default_timezone(self):
+        assert self.field.default_timezone() == utc
+
+    def test_current_timezone(self):
+        assert self.field.default_timezone() == utc
+        activate(self.kolkata)
+        assert self.field.default_timezone() == self.kolkata
+        deactivate()
+        assert self.field.default_timezone() == utc
+
+
+class TestNaiveDayLightSavingTimeTimeZoneDateTimeField(FieldValues):
+    """
+    Invalid values for `DateTimeField` with datetime in DST shift (non-existing or ambiguous) and timezone with DST.
+    Timezone America/New_York has DST shift from 2017-03-12T02:00:00 to 2017-03-12T03:00:00 and
+     from 2017-11-05T02:00:00 to 2017-11-05T01:00:00 in 2017.
+    """
+    valid_inputs = {}
+    invalid_inputs = {
+        '2017-03-12T02:30:00': ['Invalid datetime for the timezone "America/New_York".'],
+        '2017-11-05T01:30:00': ['Invalid datetime for the timezone "America/New_York".']
+    }
+    outputs = {}
+
+    class MockTimezone:
+        @staticmethod
+        def localize(value, is_dst):
+            raise compat.InvalidTimeError()
+
+        def __str__(self):
+            return 'America/New_York'
+
+    field = serializers.DateTimeField(default_timezone=MockTimezone())
 
 
 class TestTimeField(FieldValues):
@@ -1372,6 +1487,19 @@ class TestChoiceField(FieldValues):
 
         assert items[9].value == 'boolean'
 
+    def test_edit_choices(self):
+        field = serializers.ChoiceField(
+            allow_null=True,
+            choices=[
+                1, 2,
+            ]
+        )
+        field.choices = [1]
+        assert field.run_validation(1) is 1
+        with pytest.raises(serializers.ValidationError) as exc_info:
+            field.run_validation(2)
+        assert exc_info.value.detail == ['"2" is not a valid choice.']
+
 
 class TestChoiceFieldWithType(FieldValues):
     """
@@ -1484,15 +1612,15 @@ class TestMultipleChoiceField(FieldValues):
     """
     valid_inputs = {
         (): set(),
-        ('aircon',): set(['aircon']),
-        ('aircon', 'manual'): set(['aircon', 'manual']),
+        ('aircon',): {'aircon'},
+        ('aircon', 'manual'): {'aircon', 'manual'},
     }
     invalid_inputs = {
         'abc': ['Expected a list of items but got type "str".'],
         ('aircon', 'incorrect'): ['"incorrect" is not a valid choice.']
     }
     outputs = [
-        (['aircon', 'manual', 'incorrect'], set(['aircon', 'manual', 'incorrect']))
+        (['aircon', 'manual', 'incorrect'], {'aircon', 'manual', 'incorrect'})
     ]
     field = serializers.MultipleChoiceField(
         choices=[
@@ -1580,15 +1708,24 @@ class TestFieldFieldWithName(FieldValues):
     field = serializers.FileField(use_url=False)
 
 
+def ext_validator(value):
+    if not value.name.endswith('.png'):
+        raise serializers.ValidationError('File extension is not allowed. Allowed extensions is png.')
+
+
 # Stub out mock Django `forms.ImageField` class so we don't *actually*
 # call into it's regular validation, or require PIL for testing.
-class FailImageValidation(object):
+class PassImageValidation(DjangoImageField):
+    default_validators = [ext_validator]
+
     def to_python(self, value):
-        raise serializers.ValidationError(self.error_messages['invalid_image'])
+        return value
 
 
-class PassImageValidation(object):
+class FailImageValidation(PassImageValidation):
     def to_python(self, value):
+        if value.name == 'badimage.png':
+            raise serializers.ValidationError(self.error_messages['invalid_image'])
         return value
 
 
@@ -1598,7 +1735,8 @@ class TestInvalidImageField(FieldValues):
     """
     valid_inputs = {}
     invalid_inputs = [
-        (MockFile(name='example.txt', size=10), ['Upload a valid image. The file you uploaded was either not an image or a corrupted image.'])
+        (MockFile(name='badimage.png', size=10), ['Upload a valid image. The file you uploaded was either not an image or a corrupted image.']),
+        (MockFile(name='goodimage.html', size=10), ['File extension is not allowed. Allowed extensions is png.'])
     ]
     outputs = {}
     field = serializers.ImageField(_DjangoImageField=FailImageValidation)
@@ -1609,7 +1747,7 @@ class TestValidImageField(FieldValues):
     Values for an valid `ImageField`.
     """
     valid_inputs = [
-        (MockFile(name='example.txt', size=10), MockFile(name='example.txt', size=10))
+        (MockFile(name='example.png', size=10), MockFile(name='example.png', size=10))
     ]
     invalid_inputs = {}
     outputs = {}
@@ -1629,7 +1767,7 @@ class TestListField(FieldValues):
     ]
     invalid_inputs = [
         ('not a list', ['Expected a list of items but got type "str".']),
-        ([1, 2, 'error'], ['A valid integer is required.']),
+        ([1, 2, 'error', 'error'], {2: ['A valid integer is required.'], 3: ['A valid integer is required.']}),
         ({'one': 'two'}, ['Expected a list of items but got type "dict".'])
     ]
     outputs = [
@@ -1654,6 +1792,25 @@ class TestListField(FieldValues):
         with pytest.raises(serializers.ValidationError) as exc_info:
             field.to_internal_value(input_value)
         assert exc_info.value.detail == ['Expected a list of items but got type "dict".']
+
+
+class TestNestedListField(FieldValues):
+    """
+    Values for nested `ListField` with IntegerField as child.
+    """
+    valid_inputs = [
+        ([[1, 2], [3]], [[1, 2], [3]]),
+        ([[]], [[]])
+    ]
+    invalid_inputs = [
+        (['not a list'], {0: ['Expected a list of items but got type "str".']}),
+        ([[1, 2, 'error'], ['error']], {0: {2: ['A valid integer is required.']}, 1: {0: ['A valid integer is required.']}}),
+        ([{'one': 'two'}], {0: ['Expected a list of items but got type "dict".']})
+    ]
+    outputs = [
+        ([[1, 2], [3]], [[1, 2], [3]]),
+    ]
+    field = serializers.ListField(child=serializers.ListField(child=serializers.IntegerField()))
 
 
 class TestEmptyListField(FieldValues):
@@ -1696,13 +1853,13 @@ class TestUnvalidatedListField(FieldValues):
 
 class TestDictField(FieldValues):
     """
-    Values for `ListField` with CharField as child.
+    Values for `DictField` with CharField as child.
     """
     valid_inputs = [
         ({'a': 1, 'b': '2', 3: 3}, {'a': '1', 'b': '2', '3': '3'}),
     ]
     invalid_inputs = [
-        ({'a': 1, 'b': None}, ['This field may not be null.']),
+        ({'a': 1, 'b': None, 'c': None}, {'b': ['This field may not be null.'], 'c': ['This field may not be null.']}),
         ('not a dict', ['Expected a dictionary of items but got type "str".']),
     ]
     outputs = [
@@ -1728,9 +1885,26 @@ class TestDictField(FieldValues):
         assert output is None
 
 
+class TestNestedDictField(FieldValues):
+    """
+    Values for nested `DictField` with CharField as child.
+    """
+    valid_inputs = [
+        ({0: {'a': 1, 'b': '2'}, 1: {3: 3}}, {'0': {'a': '1', 'b': '2'}, '1': {'3': '3'}}),
+    ]
+    invalid_inputs = [
+        ({0: {'a': 1, 'b': None}, 1: {'c': None}}, {'0': {'b': ['This field may not be null.']}, '1': {'c': ['This field may not be null.']}}),
+        ({0: 'not a dict'}, {'0': ['Expected a dictionary of items but got type "str".']}),
+    ]
+    outputs = [
+        ({0: {'a': 1, 'b': '2'}, 1: {3: 3}}, {'0': {'a': '1', 'b': '2'}, '1': {'3': '3'}}),
+    ]
+    field = serializers.DictField(child=serializers.DictField(child=serializers.CharField()))
+
+
 class TestDictFieldWithNullChild(FieldValues):
     """
-    Values for `ListField` with allow_null CharField as child.
+    Values for `DictField` with allow_null CharField as child.
     """
     valid_inputs = [
         ({'a': None, 'b': '2', 3: 3}, {'a': None, 'b': '2', '3': '3'}),
@@ -1745,7 +1919,7 @@ class TestDictFieldWithNullChild(FieldValues):
 
 class TestUnvalidatedDictField(FieldValues):
     """
-    Values for `ListField` with no `child` argument.
+    Values for `DictField` with no `child` argument.
     """
     valid_inputs = [
         ({'a': 1, 'b': [4, 5, 6], 1: 123}, {'a': 1, 'b': [4, 5, 6], '1': 123}),
@@ -1776,6 +1950,7 @@ class TestJSONField(FieldValues):
     ]
     invalid_inputs = [
         ({'a': set()}, ['Value must be valid JSON.']),
+        ({'a': float('inf')}, ['Value must be valid JSON.']),
     ]
     outputs = [
         ({

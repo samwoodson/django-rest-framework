@@ -73,7 +73,7 @@ Deserialization is similar. First we parse a stream into Python native datatypes
 
 ## Saving instances
 
-If we want to be able to return complete object instances based on the validated data we need to implement one or both of the `.create()` and `update()` methods. For example:
+If we want to be able to return complete object instances based on the validated data we need to implement one or both of the `.create()` and `.update()` methods. For example:
 
     class CommentSerializer(serializers.Serializer):
         email = serializers.EmailField()
@@ -325,7 +325,7 @@ For updates you'll want to think carefully about how to handle updates to relati
 * Ignore the data and leave the instance as it is.
 * Raise a validation error.
 
-Here's an example for an `update()` method on our previous `UserSerializer` class.
+Here's an example for an `.update()` method on our previous `UserSerializer` class.
 
         def update(self, instance, validated_data):
             profile_data = validated_data.pop('profile')
@@ -352,7 +352,7 @@ Here's an example for an `update()` method on our previous `UserSerializer` clas
 
 Because the behavior of nested creates and updates can be ambiguous, and may require complex dependencies between related models, REST framework 3 requires you to always write these methods explicitly. The default `ModelSerializer` `.create()` and `.update()` methods do not include support for writable nested representations.
 
-It is possible that a third party package, providing automatic support some kinds of automatic writable nested representations may be released alongside the 3.1 release.
+There are however, third-party packages available such as [DRF Writable Nested][thirdparty-writable-nested] that support automatic writable nested representations.
 
 #### Handling saving related instances in model manager classes
 
@@ -492,6 +492,8 @@ In the example above, if the `Account` model had 3 fields `account_name`, `users
 The names in the `fields` and `exclude` attributes will normally map to model fields on the model class.
 
 Alternatively names in the `fields` options can map to properties or methods which take no arguments that exist on the model class.
+
+Since version 3.3.0, it is **mandatory** to provide one of the attributes `fields` or `exclude`.
 
 ## Specifying nested serialization
 
@@ -822,9 +824,7 @@ Here's an example of how you might choose to implement multiple updates:
         # We need to identify elements in the list using their primary key,
         # so use a writable field here, rather than the default which would be read-only.
         id = serializers.IntegerField()
-
         ...
-        id = serializers.IntegerField(required=False)
 
         class Meta:
             list_serializer_class = BookListSerializer
@@ -993,7 +993,7 @@ The following class is an example of a generic serializer that can handle coerci
 
 ## Overriding serialization and deserialization behavior
 
-If you need to alter the serialization, deserialization or validation of a serializer class you can do so by overriding the `.to_representation()` or `.to_internal_value()` methods.
+If you need to alter the serialization or deserialization behavior of a serializer class, you can do so by overriding the `.to_representation()` or `.to_internal_value()` methods.
 
 Some reasons this might be useful include...
 
@@ -1007,11 +1007,19 @@ The signatures for these methods are as follows:
 
 Takes the object instance that requires serialization, and should return a primitive representation. Typically this means returning a structure of built-in Python datatypes. The exact types that can be handled will depend on the render classes you have configured for your API.
 
+May be overridden in order modify the representation style. For example:
+
+    def to_representation(self, instance):
+        """Convert `username` to lowercase."""
+        ret = super().to_representation(instance)
+        ret['username'] = ret['username'].lower()
+        return ret
+
 #### ``.to_internal_value(self, data)``
 
 Takes the unvalidated incoming data as input and should return the validated data that will be made available as `serializer.validated_data`. The return value will also be passed to the `.create()` or `.update()` methods if `.save()` is called on the serializer class.
 
-If any of the validation fails, then the method should raise a `serializers.ValidationError(errors)`. Typically the `errors` argument here will be a dictionary mapping field names to error messages.
+If any of the validation fails, then the method should raise a `serializers.ValidationError(errors)`. The `errors` argument should be a dictionary mapping field names (or `settings.NON_FIELD_ERRORS_KEY`) to a list of error messages. If you don't need to alter deserialization behavior and instead want to provide object-level validation, it's recommended that you instead override the [`.validate()`](#object-level-validation) method.
 
 The `data` argument passed to this method will normally be the value of `request.data`, so the datatype it provides will depend on the parser classes you have configured for your API.
 
@@ -1075,7 +1083,7 @@ For example, if you wanted to be able to set which fields should be used by a se
             if fields is not None:
                 # Drop any fields that are not specified in the `fields` argument.
                 allowed = set(fields)
-                existing = set(self.fields.keys())
+                existing = set(self.fields)
                 for field_name in existing - allowed:
                     self.fields.pop(field_name)
 
@@ -1155,7 +1163,7 @@ The [html-json-forms][html-json-forms] package provides an algorithm and seriali
 
 ## QueryFields
 
-[djangorestframework-queryfields][djangorestframework-queryfields] allows API clients to specify which fields will be sent in the response via inclusion/exclusion query parameters.  
+[djangorestframework-queryfields][djangorestframework-queryfields] allows API clients to specify which fields will be sent in the response via inclusion/exclusion query parameters.
 
 ## DRF Writable Nested
 
@@ -1165,6 +1173,7 @@ The [drf-writable-nested][drf-writable-nested] package provides writable nested 
 [relations]: relations.md
 [model-managers]: https://docs.djangoproject.com/en/stable/topics/db/managers/
 [encapsulation-blogpost]: http://www.dabapps.com/blog/django-models-and-encapsulation/
+[thirdparty-writable-nested]: serializers.md#drf-writable-nested
 [django-rest-marshmallow]: http://tomchristie.github.io/django-rest-marshmallow/
 [marshmallow]: https://marshmallow.readthedocs.io/en/latest/
 [serpy]: https://github.com/clarkduvall/serpy
@@ -1180,4 +1189,4 @@ The [drf-writable-nested][drf-writable-nested] package provides writable nested 
 [drf-base64]: https://bitbucket.org/levit_scs/drf_base64
 [drf-serializer-extensions]: https://github.com/evenicoulddoit/django-rest-framework-serializer-extensions
 [djangorestframework-queryfields]: http://djangorestframework-queryfields.readthedocs.io/
-[drf-writable-nested]: http://github.com/Brogency/drf-writable-nested
+[drf-writable-nested]: http://github.com/beda-software/drf-writable-nested
